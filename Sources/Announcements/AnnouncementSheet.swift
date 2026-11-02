@@ -1,7 +1,7 @@
 import SwiftUI
 
 extension View {
-    /// Shows the newest announcement this person hasn't seen, as a sheet, once per launch.
+    /// Shows the newest announcement this person hasn't seen, as a sheet, when the app comes to the front (at most hourly).
     ///
     ///     ContentView()
     ///         .announcements(from: URL(string: "https://pinkshirtfriday.com/announcements/pinpoint.json")!)
@@ -28,12 +28,15 @@ public struct ResolvedAnnouncement: Identifiable, Sendable {
 public enum AnnouncementChecker {
     static let seenKey = "PSFAnnouncements.seen"
     static let showSeenKey = "PSFAnnouncementsShowSeen"
-    private static var hasChecked = false
+    /// Apps stay open for days, so the feed is checked again on returning to the app, at most this often.
+    static let checkInterval: TimeInterval = 60 * 60
+    private static var lastChecked: Date?
 
-    /// Fetches the feed and picks what to show, at most once per launch. Fails quietly: no network, no sheet.
+    /// Fetches the feed and picks what to show, at most once per `checkInterval`. Fails quietly: no network, no
+    /// sheet. Nothing counts as seen until the sheet actually appears.
     static func nextAnnouncement(from feedURL: URL, defaults: UserDefaults = .standard) async -> ResolvedAnnouncement? {
-        guard !hasChecked else { return nil }
-        hasChecked = true
+        if let lastChecked, Date.now.timeIntervalSince(lastChecked) < checkInterval { return nil }
+        lastChecked = .now
         // The shared URL cache revalidates with the server's ETag, so an unchanged feed isn't downloaded again.
         let request = URLRequest(url: feedURL, cachePolicy: .useProtocolCachePolicy, timeoutInterval: 10)
         guard let (data, response) = try? await URLSession.shared.data(for: request),
@@ -44,12 +47,16 @@ public enum AnnouncementChecker {
         let seen = defaults.bool(forKey: showSeenKey) ? [] : Set(defaults.stringArray(forKey: seenKey) ?? [])
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
         let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String
-        guard let next = select(from: feed, appVersion: version, build: build, seen: seen, preferences: Locale.preferredLanguages) else { return nil }
-        markSeen(next.id, defaults: defaults)
-        var shown = next
-        shown.app = feedURL.deletingPathExtension().lastPathComponent
-        UsageReporting.recordAnnouncement(shown, kind: "view")
-        return shown
+        guard var next = select(from: feed, appVersion: version, build: build, seen: seen, preferences: Locale.preferredLanguages) else { return nil }
+        next.app = feedURL.deletingPathExtension().lastPathComponent
+        return next
+    }
+
+    /// The sheet is on screen. Swiping it away still counts as seen.
+    static func didShow(_ announcement: ResolvedAnnouncement, defaults: UserDefaults = .standard) {
+        guard !(defaults.stringArray(forKey: seenKey) ?? []).contains(announcement.id) else { return }
+        markSeen(announcement.id, defaults: defaults)
+        UsageReporting.recordAnnouncement(announcement, kind: "view")
     }
 
     /// The newest live announcement for this version that isn't in `seen`.
@@ -64,7 +71,7 @@ public enum AnnouncementChecker {
         return ResolvedAnnouncement(id: candidate.id, language: language, content: content, link: candidate.link)
     }
 
-    /// Recorded when shown, so swiping the sheet away counts too. Keeps the last 100.
+    /// Keeps the last 100.
     private static func markSeen(_ id: String, defaults: UserDefaults) {
         var seen = defaults.stringArray(forKey: seenKey) ?? []
         seen.append(id)
@@ -76,15 +83,19 @@ struct AnnouncementsModifier: ViewModifier {
     let feedURL: URL
     let isEnabled: Bool
     @State private var announcement: ResolvedAnnouncement?
+    @Environment(\.scenePhase) private var scenePhase
 
     func body(content: Content) -> some View {
         content
-            .task {
-                guard isEnabled else { return }
+            // Only while the app is on screen: a background launch, such as for a sync notification, must not
+            // pick an announcement nobody will see.
+            .task(id: scenePhase) {
+                guard isEnabled, scenePhase == .active, announcement == nil else { return }
                 announcement = await AnnouncementChecker.nextAnnouncement(from: feedURL)
             }
             .sheet(item: $announcement) { announcement in
                 AnnouncementSheet(announcement: announcement)
+                    .onAppear { AnnouncementChecker.didShow(announcement) }
             }
     }
 }

@@ -25,7 +25,8 @@ The app name matches the feed's file name and the backend's list of apps: `kitch
 
 ## Announcements
 
-- The feed is checked once per launch. A person sees each announcement once, in the closest of its
+- The feed is checked when the app comes to the front, at most once an hour, and never during a background
+  launch. An announcement counts as seen once its sheet appears. A person sees each announcement once, in the closest of its
   languages to their own, with English as the fallback.
 - No network, a bad file or a newer feed schema all mean no sheet.
 - To see announcements again while testing, launch with `-PSFAnnouncementsShowSeen YES`.
