@@ -7,6 +7,7 @@ extension View {
     ///         .announcements(from: URL(string: "https://pinkshirtfriday.com/announcements/pinpoint.json")!)
     ///
     /// Launch with `-PSFAnnouncementsShowSeen YES` to see announcements again while testing.
+    /// Showing one, and tapping its link, are counted anonymously unless `UsageReporting.isEnabled` is off.
     /// Pass `isEnabled: false` for launches that shouldn't show one, such as screenshot runs.
     public func announcements(from feedURL: URL, isEnabled: Bool = true) -> some View {
         modifier(AnnouncementsModifier(feedURL: feedURL, isEnabled: isEnabled))
@@ -19,6 +20,8 @@ public struct ResolvedAnnouncement: Identifiable, Sendable {
     public var language: String
     public var content: Announcement.Content
     public var link: URL?
+    /// The feed's name, such as "pinpoint", for view counts.
+    var app: String?
 }
 
 @MainActor
@@ -40,16 +43,20 @@ public enum AnnouncementChecker {
 
         let seen = defaults.bool(forKey: showSeenKey) ? [] : Set(defaults.stringArray(forKey: seenKey) ?? [])
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
-        guard let next = select(from: feed, appVersion: version, seen: seen, preferences: Locale.preferredLanguages) else { return nil }
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String
+        guard let next = select(from: feed, appVersion: version, build: build, seen: seen, preferences: Locale.preferredLanguages) else { return nil }
         markSeen(next.id, defaults: defaults)
-        return next
+        var shown = next
+        shown.app = feedURL.deletingPathExtension().lastPathComponent
+        UsageReporting.recordAnnouncement(shown, kind: "view")
+        return shown
     }
 
     /// The newest live announcement for this version that isn't in `seen`.
-    public static func select(from feed: AnnouncementFeed, appVersion: String, seen: Set<String>, preferences: [String], now: Date = .now) -> ResolvedAnnouncement? {
+    public static func select(from feed: AnnouncementFeed, appVersion: String, build: String? = nil, seen: Set<String>, preferences: [String], now: Date = .now) -> ResolvedAnnouncement? {
         guard feed.schema <= AnnouncementFeed.currentSchema else { return nil }
         let candidate = feed.announcements
-            .filter { $0.isLive(at: now, appVersion: appVersion) && !seen.contains($0.id) }
+            .filter { $0.isLive(at: now, appVersion: appVersion, build: build) && !seen.contains($0.id) }
             .max { $0.publishedAt < $1.publishedAt }
         guard let candidate, let language = candidate.language(for: preferences),
               let content = candidate.localizations[language]
@@ -117,6 +124,7 @@ public struct AnnouncementSheet: View {
             VStack(spacing: 10) {
                 if let link = announcement.link {
                     Button {
+                        UsageReporting.recordAnnouncement(announcement, kind: "link")
                         openURL(link)
                         dismiss()
                     } label: {

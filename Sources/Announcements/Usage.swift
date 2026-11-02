@@ -1,0 +1,187 @@
+import Foundation
+import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
+
+extension View {
+    /// Counts this install once per day toward the app's daily, weekly and monthly users, with no identifier.
+    ///
+    ///     ContentView()
+    ///         .usageReporting(app: "pinpoint")
+    ///
+    /// Each report says only whether it's also the install's first of the week and of the month, plus the app
+    /// version, platform, device model, system version and language. Debug builds don't report unless launched
+    /// with `-PSFUsageDebug YES`. People turn it off with `UsageReporting.isEnabled`.
+    public func usageReporting(app: String, isEnabled: Bool = true) -> some View {
+        modifier(UsageModifier(app: app, isEnabled: isEnabled))
+    }
+}
+
+/// The app's switch for anonymous usage reports, announcement views included. On unless turned off.
+public enum UsageReporting {
+    /// Bind a toggle to this with `@AppStorage(UsageReporting.disabledKey)`, where true means off.
+    public static let disabledKey = "PSFUsage.disabled"
+    static let lastDayKey = "PSFUsage.lastDay"
+    static let lastWeekKey = "PSFUsage.lastWeek"
+    static let lastMonthKey = "PSFUsage.lastMonth"
+    static let debugKey = "PSFUsageDebug"
+
+    public static var isEnabled: Bool {
+        get { !UserDefaults.standard.bool(forKey: disabledKey) }
+        set { UserDefaults.standard.set(!newValue, forKey: disabledKey) }
+    }
+
+    /// Off in debug builds, so testing doesn't count as users.
+    static var mayReport: Bool {
+        #if DEBUG
+        guard UserDefaults.standard.bool(forKey: debugKey) else { return false }
+        #endif
+        return isEnabled
+    }
+
+    /// The periods a report sent at `date` would be the first of, in UTC to match the server's days.
+    struct Periods: Equatable {
+        var day: String
+        var week: String
+        var month: String
+
+        init(day: String, week: String, month: String) {
+            self.day = day
+            self.week = week
+            self.month = month
+        }
+
+        init(_ date: Date) {
+            var calendar = Calendar(identifier: .iso8601)
+            calendar.timeZone = TimeZone(identifier: "UTC")!
+            let parts = calendar.dateComponents([.year, .month, .day, .yearForWeekOfYear, .weekOfYear], from: date)
+            day = String(format: "%04d-%02d-%02d", parts.year!, parts.month!, parts.day!)
+            week = String(format: "%04d-W%02d", parts.yearForWeekOfYear!, parts.weekOfYear!)
+            month = String(format: "%04d-%02d", parts.year!, parts.month!)
+        }
+    }
+
+    @MainActor private static var isSending = false
+
+    /// Sends today's report if this install hasn't yet. A failed send is tried again on the next activation.
+    @MainActor static func reportIfNeeded(app: String, defaults: UserDefaults = .standard, now: Date = .now) async {
+        guard mayReport, !isSending else { return }
+        let periods = Periods(now)
+        guard defaults.string(forKey: lastDayKey) != periods.day else { return }
+        isSending = true
+        defer { isSending = false }
+
+        var body = DeviceContext.current(app: app)
+        body["firstOfWeek"] = defaults.string(forKey: lastWeekKey) != periods.week
+        body["firstOfMonth"] = defaults.string(forKey: lastMonthKey) != periods.month
+        guard await API.post("v1/ping", body) != nil else { return }
+        defaults.set(periods.day, forKey: lastDayKey)
+        defaults.set(periods.week, forKey: lastWeekKey)
+        defaults.set(periods.month, forKey: lastMonthKey)
+    }
+
+    /// An announcement was shown, or its link was tapped.
+    static func recordAnnouncement(_ announcement: ResolvedAnnouncement, kind: String) {
+        guard mayReport, let app = announcement.app else { return }
+        let body: [String: any Sendable] = ["app": app, "announcement": announcement.id, "kind": kind, "language": announcement.language]
+        Task.detached { _ = await API.post("v1/announcement-events", body) }
+    }
+}
+
+struct UsageModifier: ViewModifier {
+    let app: String
+    let isEnabled: Bool
+    @Environment(\.scenePhase) private var scenePhase
+
+    func body(content: Content) -> some View {
+        content
+            // Apps stay open for days, so a new day's activation counts too, not just launch.
+            .task(id: scenePhase) {
+                guard isEnabled, scenePhase == .active else { return }
+                await UsageReporting.reportIfNeeded(app: app)
+            }
+    }
+}
+
+/// What every report and feedback message says about where it came from.
+enum DeviceContext {
+    @MainActor static func current(app: String) -> [String: any Sendable] {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let os = ProcessInfo.processInfo.operatingSystemVersion
+        return [
+            "app": app,
+            "platform": platform,
+            "device": model,
+            "os": "\(os.majorVersion).\(os.minorVersion)",
+            "version": info["CFBundleShortVersionString"] as? String ?? "?",
+            "build": info["CFBundleVersion"] as? String ?? "?",
+            "language": Locale.preferredLanguages.first ?? "?",
+        ]
+    }
+
+    @MainActor static var platform: String {
+        #if os(macOS)
+        "macOS"
+        #elseif os(visionOS)
+        "visionOS"
+        #else
+        ProcessInfo.processInfo.isiOSAppOnMac ? "macOS" : UIDevice.current.userInterfaceIdiom == .pad ? "iPadOS" : "iOS"
+        #endif
+    }
+
+    /// The hardware model, such as iPhone16,2 or Mac14,3.
+    static var model: String {
+        if let simulated = ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"] { return simulated }
+        #if os(macOS)
+        return sysctlString("hw.model") ?? "Mac"
+        #else
+        var system = utsname()
+        uname(&system)
+        return withUnsafeBytes(of: &system.machine) { String(decoding: $0.prefix(while: { $0 != 0 }), as: UTF8.self) }
+        #endif
+    }
+
+    #if os(macOS)
+    private static func sysctlString(_ name: String) -> String? {
+        var size = 0
+        guard sysctlbyname(name, nil, &size, nil, 0) == 0, size > 0 else { return nil }
+        var buffer = [UInt8](repeating: 0, count: size)
+        guard sysctlbyname(name, &buffer, &size, nil, 0) == 0 else { return nil }
+        return String(decoding: buffer.prefix(while: { $0 != 0 }), as: UTF8.self)
+    }
+    #endif
+}
+
+/// Pink Shirt Friday's backend, the pinkshirtfriday-api Worker.
+enum API {
+    static let baseURL = URL(string: "https://pinkshirtfriday-api.pinkshirtfriday-api.workers.dev/")!
+
+    enum Failure: Error {
+        case offline
+        case tooManyRequests
+        case rejected(String)
+    }
+
+    /// The response body, or nil on any failure. For callers that don't need to say why.
+    static func post(_ path: String, _ body: [String: any Sendable]) async -> Data? {
+        try? await send(path, body)
+    }
+
+    static func send(_ path: String, _ body: [String: any Sendable]) async throws(Failure) -> Data {
+        var request = URLRequest(url: baseURL.appending(path: path), timeoutInterval: 15)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              let status = (response as? HTTPURLResponse)?.statusCode
+        else { throw .offline }
+        switch status {
+        case 200..<300: return data
+        case 429: throw .tooManyRequests
+        default:
+            struct Message: Decodable { var error: String }
+            throw .rejected((try? JSONDecoder().decode(Message.self, from: data))?.error ?? "HTTP \(status)")
+        }
+    }
+}

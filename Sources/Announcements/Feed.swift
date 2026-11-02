@@ -59,8 +59,8 @@ public struct Announcement: Codable, Sendable, Identifiable {
         self.localizations = localizations
     }
 
-    public func isLive(at date: Date, appVersion: String) -> Bool {
-        publishedAt <= date && date < expiresAt && (versions?.matches(appVersion) ?? true)
+    public func isLive(at date: Date, appVersion: String, build: String? = nil) -> Bool {
+        publishedAt <= date && date < expiresAt && (versions?.matches(appVersion, build: build) ?? true)
     }
 
     /// The best language for someone whose preferred languages are `preferences`, falling back to English.
@@ -78,23 +78,32 @@ public struct Announcement: Codable, Sendable, Identifiable {
 public struct VersionRule: Codable, Sendable, Equatable {
     /// Only versions lower than this, such as "2.1" for a "please update" message.
     public var below: String?
+    /// With `below`, also builds of that exact version numbered lower than this: "2.1" and "45" reach 2.1 (44).
+    /// Older copies of this package ignore it and leave out every build of `below`.
+    public var belowBuild: String?
     /// Only these exact versions.
     public var only: [String]?
 
-    public init(below: String? = nil, only: [String]? = nil) {
+    public init(below: String? = nil, belowBuild: String? = nil, only: [String]? = nil) {
         self.below = below
+        self.belowBuild = belowBuild
         self.only = only
     }
 
-    public func matches(_ version: String) -> Bool {
+    /// `build` is CFBundleVersion. Without it, a `belowBuild` rule leaves out the `below` version entirely.
+    public func matches(_ version: String, build: String? = nil) -> Bool {
         let current = AppVersion(version)
-        if let below, !(current < AppVersion(below)) { return false }
+        if let below {
+            let limit = AppVersion(below)
+            let earlierBuild = belowBuild.flatMap { belowBuild in build.map { AppVersion($0) < AppVersion(belowBuild) } } ?? false
+            guard current < limit || (current == limit && earlierBuild) else { return false }
+        }
         if let only, !only.contains(where: { AppVersion($0) == current }) { return false }
         return true
     }
 }
 
-/// A dotted version number compared part by part, so "1.10" > "1.9" and "2.0" == "2".
+/// A dotted version or build number compared part by part, so "1.10" > "1.9" and "2.0" == "2".
 public struct AppVersion: Comparable, Sendable {
     let parts: [Int]
 

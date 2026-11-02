@@ -15,6 +15,16 @@ import Testing
         #expect(VersionRule(only: ["1.4", "1.5"]).matches("1.5.0"))
         #expect(!VersionRule(only: ["1.4"]).matches("1.5"))
     }
+
+    @Test func belowBuild() {
+        let rule = VersionRule(below: "2.1", belowBuild: "45")
+        #expect(rule.matches("2.0.9", build: "60"))
+        #expect(rule.matches("2.1", build: "44"))
+        #expect(!rule.matches("2.1", build: "45"))
+        #expect(!rule.matches("2.1"))
+        #expect(!rule.matches("2.2", build: "1"))
+        #expect(!VersionRule(below: "2.1").matches("2.1", build: "1"))
+    }
 }
 
 @Suite struct SelectionTests {
@@ -86,4 +96,15 @@ import Testing
         #expect(AnnouncementSheet.localized("OK", language: "ko") == "확인")
         #expect(AnnouncementSheet.localized("OK", language: "en") == "OK")
     }
+}
+
+@Suite struct UsageTests {
+    @Test func periodsUseUTCAndISOWeeks() throws {
+        let november = try Date("2026-11-02T23:30:00Z", strategy: .iso8601)
+        #expect(UsageReporting.Periods(november) == .init(day: "2026-11-02", week: "2026-W45", month: "2026-11"))
+        // January 1, 2027 is a Friday, so it's still in 2026's last ISO week.
+        let newYear = try Date("2027-01-01T08:00:00Z", strategy: .iso8601)
+        #expect(UsageReporting.Periods(newYear) == .init(day: "2027-01-01", week: "2026-W53", month: "2027-01"))
+    }
+
 }
