@@ -7,8 +7,9 @@ extension View {
     ///         .announcements(from: URL(string: "https://pinkshirtfriday.com/announcements/pinpoint.json")!)
     ///
     /// Launch with `-PSFAnnouncementsShowSeen YES` to see announcements again while testing.
-    public func announcements(from feedURL: URL) -> some View {
-        modifier(AnnouncementsModifier(feedURL: feedURL))
+    /// Pass `isEnabled: false` for launches that shouldn't show one, such as screenshot runs.
+    public func announcements(from feedURL: URL, isEnabled: Bool = true) -> some View {
+        modifier(AnnouncementsModifier(feedURL: feedURL, isEnabled: isEnabled))
     }
 }
 
@@ -66,11 +67,13 @@ public enum AnnouncementChecker {
 
 struct AnnouncementsModifier: ViewModifier {
     let feedURL: URL
+    let isEnabled: Bool
     @State private var announcement: ResolvedAnnouncement?
 
     func body(content: Content) -> some View {
         content
             .task {
+                guard isEnabled else { return }
                 announcement = await AnnouncementChecker.nextAnnouncement(from: feedURL)
             }
             .sheet(item: $announcement) { announcement in
