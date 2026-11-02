@@ -41,7 +41,9 @@ The app name matches the feed's file name and the backend's list of apps: `kitch
   install, with no identifier. Each says whether it's also the install's first of the ISO week and of the month,
   which is how the server counts weekly and monthly users. Showing an announcement and tapping its link are
   counted too.
-- Debug builds don't report unless launched with `-PSFUsageDebug YES`.
+- Debug builds don't report unless launched with `-PSFUsageDebug YES`, and simulators never do.
+- The last report's day, week and month are kept in the Keychain as well as UserDefaults, so deleting and
+  reinstalling on iPhone or iPad the same day isn't counted twice.
 - Turn reporting off with `UsageReporting.isEnabled = false`, or a toggle on
   `@AppStorage(UsageReporting.disabledKey)` (true means off). Feedback is sent either way, since the person
   chose to send it.

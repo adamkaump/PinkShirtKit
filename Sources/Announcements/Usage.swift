@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import SwiftUI
 #if canImport(UIKit)
 import UIKit
@@ -32,16 +33,20 @@ public enum UsageReporting {
         set { UserDefaults.standard.set(!newValue, forKey: disabledKey) }
     }
 
-    /// Off in debug builds, so testing doesn't count as users.
+    /// Off in debug builds and simulators, so testing doesn't count as users.
     static var mayReport: Bool {
+        #if targetEnvironment(simulator)
+        return false
+        #else
         #if DEBUG
         guard UserDefaults.standard.bool(forKey: debugKey) else { return false }
         #endif
         return isEnabled
+        #endif
     }
 
     /// The periods a report sent at `date` would be the first of, in UTC to match the server's days.
-    struct Periods: Equatable {
+    struct Periods: Equatable, Codable {
         var day: String
         var week: String
         var month: String
@@ -65,20 +70,19 @@ public enum UsageReporting {
     @MainActor private static var isSending = false
 
     /// Sends today's report if this install hasn't yet. A failed send is tried again on the next activation.
-    @MainActor static func reportIfNeeded(app: String, defaults: UserDefaults = .standard, now: Date = .now) async {
+    @MainActor static func reportIfNeeded(app: String, now: Date = .now) async {
         guard mayReport, !isSending else { return }
         let periods = Periods(now)
-        guard defaults.string(forKey: lastDayKey) != periods.day else { return }
+        let last = LastReport.load()
+        guard last?.day != periods.day else { return }
         isSending = true
         defer { isSending = false }
 
         var body = DeviceContext.current(app: app)
-        body["firstOfWeek"] = defaults.string(forKey: lastWeekKey) != periods.week
-        body["firstOfMonth"] = defaults.string(forKey: lastMonthKey) != periods.month
+        body["firstOfWeek"] = last?.week != periods.week
+        body["firstOfMonth"] = last?.month != periods.month
         guard await API.post("v1/ping", body) != nil else { return }
-        defaults.set(periods.day, forKey: lastDayKey)
-        defaults.set(periods.week, forKey: lastWeekKey)
-        defaults.set(periods.month, forKey: lastMonthKey)
+        LastReport.save(periods)
     }
 
     /// An announcement was shown, or its link was tapped.
@@ -86,6 +90,46 @@ public enum UsageReporting {
         guard mayReport, let app = announcement.app else { return }
         let body: [String: any Sendable] = ["app": app, "announcement": announcement.id, "kind": kind, "language": announcement.language]
         Task.detached { _ = await API.post("v1/announcement-events", body) }
+    }
+}
+
+/// When this device last reported. Kept in the Keychain, which on iPhone and iPad survives deleting and
+/// reinstalling the app, so a reinstall the same day or week isn't counted as another person. It holds only the
+/// dates, never anything sent anywhere. UserDefaults is the fallback if the Keychain refuses.
+enum LastReport {
+    private static var query: [CFString: Any] { [
+        kSecClass: kSecClassGenericPassword,
+        kSecAttrService: "PSFUsage",
+        kSecAttrAccount: "lastReport",
+        kSecUseDataProtectionKeychain: true,
+    ] }
+
+    static func load() -> UsageReporting.Periods? {
+        var request = query
+        request[kSecReturnData] = true
+        var result: CFTypeRef?
+        if SecItemCopyMatching(request as CFDictionary, &result) == errSecSuccess, let data = result as? Data,
+           let periods = try? JSONDecoder().decode(UsageReporting.Periods.self, from: data) {
+            return periods
+        }
+        let defaults = UserDefaults.standard
+        guard let day = defaults.string(forKey: UsageReporting.lastDayKey) else { return nil }
+        return .init(day: day, week: defaults.string(forKey: UsageReporting.lastWeekKey) ?? "",
+                     month: defaults.string(forKey: UsageReporting.lastMonthKey) ?? "")
+    }
+
+    static func save(_ periods: UsageReporting.Periods) {
+        let defaults = UserDefaults.standard
+        defaults.set(periods.day, forKey: UsageReporting.lastDayKey)
+        defaults.set(periods.week, forKey: UsageReporting.lastWeekKey)
+        defaults.set(periods.month, forKey: UsageReporting.lastMonthKey)
+        guard let data = try? JSONEncoder().encode(periods) else { return }
+        if SecItemUpdate(query as CFDictionary, [kSecValueData: data] as CFDictionary) == errSecItemNotFound {
+            var item = query
+            item[kSecValueData] = data
+            item[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlock
+            SecItemAdd(item as CFDictionary, nil)
+        }
     }
 }
 
