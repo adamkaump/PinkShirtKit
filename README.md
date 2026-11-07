@@ -42,7 +42,11 @@ The app name matches the feed's file name and the backend's list of apps: `kitch
   install, with no identifier. Each says whether it's also the install's first of the ISO week and of the month,
   which is how the server counts weekly and monthly users. Showing an announcement and tapping its link are
   counted too.
-- Debug builds don't report unless launched with `-PSFUsageDebug YES`, and simulators never do.
+- While the app is on screen it sends a heartbeat each minute with only the app's name and whether a session is
+  starting (after 5 minutes or more away). The server adds these up into sessions and foreground minutes per
+  day, and counts the last minute's heartbeats as people using the app now.
+- Debug builds don't report unless launched with `-PSFUsageDebug YES`. Simulators and Apple's virtual devices
+  (iPhone99,x, VirtualMac), which launch every uploaded build, never do.
 - The last report's day, week and month are kept in the Keychain as well as UserDefaults, so deleting and
   reinstalling on iPhone or iPad the same day isn't counted twice.
 - Turn reporting off with `UsageReporting.isEnabled = false`, or a toggle on
