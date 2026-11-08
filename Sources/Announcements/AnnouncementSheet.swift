@@ -129,7 +129,9 @@ public struct AnnouncementSheet: View {
             ScrollView {
                 Text(body_)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    #if !os(tvOS)
                     .textSelection(.enabled)
+                    #endif
             }
             .scrollBounceBehavior(.basedOnSize)
             VStack(spacing: 10) {
@@ -155,7 +157,9 @@ public struct AnnouncementSheet: View {
                         Text(Self.localized("OK", language: announcement.language)).frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
+                    #if !os(tvOS)
                     .keyboardShortcut(.defaultAction)
+                    #endif
                 }
             }
             .controlSize(.large)

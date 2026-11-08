@@ -201,6 +201,8 @@ enum DeviceContext {
         "macOS"
         #elseif os(visionOS)
         "visionOS"
+        #elseif os(tvOS)
+        "tvOS"
         #else
         ProcessInfo.processInfo.isiOSAppOnMac ? "macOS" : UIDevice.current.userInterfaceIdiom == .pad ? "iPadOS" : "iOS"
         #endif

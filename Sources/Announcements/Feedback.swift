@@ -1,3 +1,5 @@
+#if !os(tvOS)
+// tvOS has no text editor for a message, so the feedback form is iOS, iPadOS, macOS and visionOS only.
 import SwiftUI
 
 extension View {
@@ -160,3 +162,4 @@ public struct FeedbackForm: View {
 #Preview {
     FeedbackForm(app: "pinpoint")
 }
+#endif
