@@ -2,14 +2,14 @@
 import PackageDescription
 
 let package = Package(
-    name: "Announcements",
+    name: "PinkShirtKit",
     defaultLocalization: "en",
     platforms: [.iOS(.v17), .macOS(.v14), .tvOS(.v17), .visionOS(.v1)],
     products: [
-        .library(name: "Announcements", targets: ["Announcements"]),
+        .library(name: "PinkShirtKit", targets: ["PinkShirtKit"]),
     ],
     targets: [
-        .target(name: "Announcements", resources: [.process("Resources")]),
-        .testTarget(name: "AnnouncementsTests", dependencies: ["Announcements"]),
+        .target(name: "PinkShirtKit", resources: [.process("Resources")]),
+        .testTarget(name: "PinkShirtKitTests", dependencies: ["PinkShirtKit"]),
     ]
 )

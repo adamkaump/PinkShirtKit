@@ -1,4 +1,4 @@
-# Announcements
+# PinkShirtKit
 
 Pink Shirt Friday's shared app services, all read in Megaphone:
 
@@ -7,7 +7,7 @@ Pink Shirt Friday's shared app services, all read in Megaphone:
 - A feedback form.
 
 ```swift
-import Announcements
+import PinkShirtKit
 
 WindowGroup {
     ContentView()
@@ -21,7 +21,7 @@ Button("Send Feedback") { showingFeedback = true }
 ```
 
 The app name matches the feed's file name and the backend's list of apps: `kitchen-sync`, `media-client`,
-`pinpoint` or `spider-solitaire`.
+`pinpoint`, `schooldash` or `spider-solitaire`.
 
 Runs on iOS, iPadOS, macOS, tvOS and visionOS. tvOS gets announcements and usage reporting but no feedback form,
 since it has no text editor for writing a message.
@@ -59,5 +59,7 @@ since it has no text editor for writing a message.
   Product Interaction and Other Diagnostic Data (not linked, analytics), and Customer Support and Email Address
   (linked, app functionality).
 - The feedback form's text ships in all 18 languages.
+
+Called Announcements before 2.0.0; GitHub redirects the old repository address.
 
 Run the tests with `swift test`.

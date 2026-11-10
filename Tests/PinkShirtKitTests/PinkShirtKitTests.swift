@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import Announcements
+@testable import PinkShirtKit
 
 @Suite struct VersionTests {
     @Test func comparesNumerically() {
