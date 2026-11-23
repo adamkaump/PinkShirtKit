@@ -8,14 +8,14 @@ import AppKit
 #endif
 
 extension View {
-    /// Counts this install once per day toward the app's daily, weekly and monthly users, with no identifier.
+    /// Counts this install toward the app's users, sessions and time in app, under a random ID it replaces yearly.
     ///
     ///     ContentView()
     ///         .usageReporting(app: "pinpoint")
     ///
-    /// Each report says only whether it's also the install's first of the week and of the month, plus the app
-    /// version, platform, device model, system version and language. While the app is active it also sends a
-    /// heartbeat each minute, holding only the app's name, for sessions, time spent and people using it now. The
+    /// Once a day it sends the install's ID with the app version, platform, device model, system version and
+    /// language. While the app is active it also sends a heartbeat each minute with the ID and app version, which
+    /// the server joins into sessions with start and end times, for users, time spent and people using it now. The
     /// heartbeats follow the app's active state, so they continue while a full-screen player covers this view.
     /// Debug builds don't report unless launched with `-PSFUsageDebug YES`. People turn it off with
     /// `UsageReporting.isEnabled`.
@@ -24,13 +24,14 @@ extension View {
     }
 }
 
-/// The app's switch for anonymous usage reports, announcement views included. On unless turned off.
+/// The app's switch for usage reports, announcement views included. On unless turned off.
 public enum UsageReporting {
     /// Bind a toggle to this with `@AppStorage(UsageReporting.disabledKey)`, where true means off.
     public static let disabledKey = "PSFUsage.disabled"
     static let lastDayKey = "PSFUsage.lastDay"
     static let lastWeekKey = "PSFUsage.lastWeek"
     static let lastMonthKey = "PSFUsage.lastMonth"
+    static let reportedIDKey = "PSFUsage.reportedID"
     static let debugKey = "PSFUsageDebug"
 
     public static var isEnabled: Bool {
@@ -118,7 +119,10 @@ public enum UsageReporting {
         while !Task.isCancelled {
             lastHeartbeat = .now
             lastOnScreen = .now
-            let body: [String: any Sendable] = ["app": app, "start": start]
+            let body: [String: any Sendable] = [
+                "app": app, "id": InstallID.current().uuidString.lowercased(), "version": DeviceContext.version,
+                "start": start,
+            ]
             Task.detached { _ = await API.post("v1/heartbeat", body) }
             start = false
             try? await Task.sleep(for: .seconds(UsageReporting.heartbeatInterval))
@@ -137,7 +141,8 @@ public enum UsageReporting {
 }
 
 extension UsageReporting {
-    /// The periods a report sent at `date` would be the first of, in UTC to match the server's days.
+    /// The UTC day, ISO week and month a report was sent in. Only the day is used now, to send one a day; the server
+    /// works out days in any time zone from the install's heartbeats.
     struct Periods: Equatable, Codable {
         var day: String
         var week: String
@@ -165,16 +170,18 @@ extension UsageReporting {
     @MainActor static func reportIfNeeded(app: String, now: Date = .now) async {
         guard mayReport, !isSending else { return }
         let periods = Periods(now)
-        let last = LastReport.load()
-        guard last?.day != periods.day else { return }
+        let id = InstallID.current(now: now).uuidString.lowercased()
+        let defaults = UserDefaults.standard
+        // A new ID is reported straight away, so the server knows the install's details.
+        guard LastReport.load()?.day != periods.day || defaults.string(forKey: reportedIDKey) != id else { return }
         isSending = true
         defer { isSending = false }
 
         var body = DeviceContext.current(app: app)
-        body["firstOfWeek"] = last?.week != periods.week
-        body["firstOfMonth"] = last?.month != periods.month
+        body["id"] = id
         guard await API.post("v1/ping", body) != nil else { return }
         LastReport.save(periods)
+        defaults.set(id, forKey: reportedIDKey)
     }
 
     /// An announcement was shown, or its link was tapped.
@@ -225,6 +232,64 @@ enum LastReport {
     }
 }
 
+/// A random ID for this install, sent with usage reports so the server can tell people apart and work out days in
+/// any time zone. Made on the device, never tied to an account or anything else, and replaced after a year. Kept in
+/// the Keychain like `LastReport`, so deleting and reinstalling doesn't look like someone new.
+enum InstallID {
+    /// How long one ID lasts.
+    static let lifetime: TimeInterval = 365 * 24 * 60 * 60
+
+    struct Stored: Codable, Equatable {
+        var id: UUID
+        var created: Date
+    }
+
+    private static let defaultsKey = "PSFUsage.installID"
+    private static var query: [CFString: Any] { [
+        kSecClass: kSecClassGenericPassword,
+        kSecAttrService: "PSFUsage",
+        kSecAttrAccount: "installID",
+        kSecUseDataProtectionKeychain: true,
+    ] }
+
+    /// This install's ID, made or replaced as needed.
+    static func current(now: Date = .now) -> UUID {
+        if let stored = load(), isValid(stored, now: now) { return stored.id }
+        let fresh = Stored(id: UUID(), created: now)
+        save(fresh)
+        return fresh.id
+    }
+
+    /// Unexpired, and not from the future, in case the clock was wrong when it was made.
+    static func isValid(_ stored: Stored, now: Date) -> Bool {
+        let age = now.timeIntervalSince(stored.created)
+        return age >= -24 * 60 * 60 && age < lifetime
+    }
+
+    private static func load() -> Stored? {
+        var request = query
+        request[kSecReturnData] = true
+        var result: CFTypeRef?
+        if SecItemCopyMatching(request as CFDictionary, &result) == errSecSuccess, let data = result as? Data,
+           let stored = try? JSONDecoder().decode(Stored.self, from: data) {
+            return stored
+        }
+        guard let data = UserDefaults.standard.data(forKey: defaultsKey) else { return nil }
+        return try? JSONDecoder().decode(Stored.self, from: data)
+    }
+
+    private static func save(_ stored: Stored) {
+        guard let data = try? JSONEncoder().encode(stored) else { return }
+        UserDefaults.standard.set(data, forKey: defaultsKey)
+        if SecItemUpdate(query as CFDictionary, [kSecValueData: data] as CFDictionary) == errSecItemNotFound {
+            var item = query
+            item[kSecValueData] = data
+            item[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlock
+            SecItemAdd(item as CFDictionary, nil)
+        }
+    }
+}
+
 struct UsageModifier: ViewModifier {
     let app: String
     let isEnabled: Bool
@@ -249,10 +314,14 @@ enum DeviceContext {
             "platform": platform,
             "device": model,
             "os": "\(os.majorVersion).\(os.minorVersion)",
-            "version": info["CFBundleShortVersionString"] as? String ?? "?",
+            "version": version,
             "build": info["CFBundleVersion"] as? String ?? "?",
             "language": Locale.preferredLanguages.first ?? "?",
         ]
+    }
+
+    static var version: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
     }
 
     @MainActor static var platform: String {

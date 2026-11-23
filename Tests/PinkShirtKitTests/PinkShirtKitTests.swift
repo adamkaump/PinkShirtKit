@@ -107,6 +107,15 @@ import Testing
         #expect(UsageReporting.Periods(newYear) == .init(day: "2027-01-01", week: "2026-W53", month: "2027-01"))
     }
 
+    @Test func installIDLastsAYear() {
+        let made = Date(timeIntervalSince1970: 1_000_000_000)
+        let stored = InstallID.Stored(id: UUID(), created: made)
+        #expect(InstallID.isValid(stored, now: made.addingTimeInterval(364 * 24 * 60 * 60)))
+        #expect(!InstallID.isValid(stored, now: made.addingTimeInterval(InstallID.lifetime)))
+        // Made with the clock far ahead: replaced once it's back.
+        #expect(!InstallID.isValid(stored, now: made.addingTimeInterval(-2 * 24 * 60 * 60)))
+    }
+
 }
 
 @Suite struct HeartbeatTests {

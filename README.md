@@ -3,7 +3,7 @@
 Pink Shirt Friday's shared app services, all read in Megaphone:
 
 - Announcements written in Megaphone, shown as a sheet on launch.
-- Anonymous daily, weekly and monthly user counts.
+- Usage: users, sessions and time in app, under a random install ID.
 - A feedback form.
 
 ```swift
@@ -41,23 +41,24 @@ since it has no text editor for writing a message.
 
 ## Usage and feedback
 
-- Usage reports go to the pinkshirtfriday-api Worker (`../pinkshirtfriday-api`), at most once per UTC day per
-  install, with no identifier. Each says whether it's also the install's first of the ISO week and of the month,
-  which is how the server counts weekly and monthly users. Showing an announcement and tapping its link are
-  counted too.
-- While the app is on screen it sends a heartbeat each minute with only the app's name and whether a session is
-  starting (after 5 minutes or more away). The server adds these up into sessions and foreground minutes per
-  day, and counts the last minute's heartbeats as people using the app now.
+- Each install makes a random ID (a UUID) and replaces it after a year. It's never tied to an account or sent to
+  anyone else, and it's kept in the Keychain so a reinstall keeps it.
+- A usage report goes to the pinkshirtfriday-api Worker (`../pinkshirtfriday-api`) once a UTC day, and when the
+  ID changes, with the ID, app version, platform, device model, system version and language. Showing an
+  announcement and tapping its link are counted too.
+- While the app is on screen it sends a heartbeat each minute with the ID, app version and whether a session is
+  starting (after 5 minutes or more away). The server joins these into sessions with start and end times, so
+  Megaphone can count users, sessions and minutes per day in any time zone, and people using the app now.
 - Debug builds don't report unless launched with `-PSFUsageDebug YES`. Simulators and Apple's virtual devices
   (iPhone99,x, VirtualMac), which launch every uploaded build, never do.
-- The last report's day, week and month are kept in the Keychain as well as UserDefaults, so deleting and
-  reinstalling on iPhone or iPad the same day isn't counted twice.
+- The ID and the last report's day are kept in the Keychain as well as UserDefaults, so deleting and
+  reinstalling on iPhone or iPad isn't counted as someone new.
 - Turn reporting off with `UsageReporting.isEnabled = false`, or a toggle on
   `@AppStorage(UsageReporting.disabledKey)` (true means off). Feedback is sent either way, since the person
   chose to send it.
 - `PrivacyInfo.xcprivacy` declares what's collected. Each app's App Store privacy details have to match:
-  Product Interaction and Other Diagnostic Data (not linked, analytics), and Customer Support and Email Address
-  (linked, app functionality).
+  Device ID, Product Interaction and Other Diagnostic Data (not linked, analytics), and Customer Support and Email
+  Address (linked, app functionality).
 - The feedback form's text ships in all 18 languages.
 
 Called Announcements before 2.0.0; GitHub redirects the old repository address.
